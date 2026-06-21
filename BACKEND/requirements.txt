@@ -1,0 +1,22 @@
+# Core Agent Orchestration & Framework
+langgraph
+langchain
+langchain-community
+
+# LLM Providers & Integrations
+langchain-openai
+langchain-groq
+langchain-mistralai
+
+# Tools & External APIs
+langchain-tavily
+tavily-python
+requests
+
+# Database (PostgreSQL State Persistence & Pooling)
+psycopg[binary]
+psycopg_pool
+
+# Web App Interface & Configuration
+streamlit
+python-dotenv
