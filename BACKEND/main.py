@@ -36,7 +36,6 @@ llm = ChatMistralAI(
 )
 
 # LANGGRAPH
-
 # creating state
 class TravelState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
