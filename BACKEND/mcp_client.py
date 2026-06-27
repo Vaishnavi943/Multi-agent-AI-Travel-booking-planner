@@ -1,25 +1,29 @@
-
+from ast import main
 import os
 import asyncio
 
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-#load_dotenv()
+# load_dotenv()
 load_dotenv(override=True)
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 AVIATION_API_KEY = os.getenv("AVIATION_API_KEY")
+
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-
-client = MultiServerMCPClient({
-     "tavily": {
+client = MultiServerMCPClient(
+    {   
+        # remote MCP Server
+        "tavily": {
             "transport": "streamable_http",
-            "url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY} "
+            "url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
         },
-         "aviationstack": {
+
+        # Local MCP Server
+        "aviationstack": {
             "transport": "stdio",
-            "command": r"E:\multi_agent_system_demo\multi_agent_system_v2\aviationstack-mcp\.venv\Scripts\python.exe",
+            "command": r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\aviationstack-mcp\.venv\Scripts\python.exe",
             "args": [
                 "-m",
                 "aviationstack_mcp",
@@ -27,72 +31,23 @@ client = MultiServerMCPClient({
                 "run"
             ],
             "env": {
-                "AVIATION_STACK_API_KEY": AVIATION_API_KEY
+                "AVIATION_API_KEY": AVIATION_API_KEY
             }
         },
+
+        #Custome MCP Server
         "weather": {
             "transport": "stdio",
-            "command": r"E:\multi_agent_system_demo\langgraph_env3\Scripts\python.exe",
+            "command": r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\.venv\Scripts\python.exe",
             "args": [
-                r"E:\Multi_agent_system_with_MCP\custom_weather_mcp_server.py"
+                r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\custom_weather_mcp_server.py"
             ],
             "env": {
                 "OPENWEATHER_API_KEY": OPENWEATHER_API_KEY
             }
         }
-
-})
-
-
-# tools discovery
-# async def main():
-
-#     tools = await client.get_tools()
-
-#     print("\nAvailable MCP Tools:\n")
-
-#     for tool in tools:
-#         print(tool.name)
-
-
-# async def main():
-#     tools = await client.get_tools()
-
-#     search_tool = next(
-#         tool
-#         for tool in tools
-#         if tool.name == "tavily_search"
-#     )
-
-#     result = await search_tool.ainvoke(
-#         {
-#             "query": "Best hotels in Delhi"
-#         }
-#     )
-
-#     print(result)
-
-# asyncio.run(main()) 
-
-
-# search_tool = None
-
-# async def initialize_mcp():
-#     global search_tool
-#     if search_tool is not None:
-#         return
-
-#     tools = await client.get_tools()
-#     print("\nAvailable MCP Tools:")
-
-#     for tool in tools:
-#         print(tool.name)
-
-#     search_tool = next(
-#         tool
-#         for tool in tools
-#         if tool.name == "tavily_search"
-#     )
+    }
+)
 
 
 
@@ -104,12 +59,17 @@ async def initialize_mcp():
     global search_tool
     global aviation_tools
 
+    print("[INIT] initialize_mcp() called")
+
     if search_tool is not None and aviation_tools:
+        print("[INIT] Already initialized")
         return
+
+    print("[INIT] Loading tools...")
 
     tools = await client.get_tools()
 
-    print("\nAvailable MCP Tools:\n")
+    print(f"[INIT] Loaded {len(tools)} tools")
 
     for tool in tools:
         print(tool.name)
@@ -126,8 +86,7 @@ async def initialize_mcp():
         if tool.name != "tavily_search"
     }
 
-
-
+    print("[INIT] Initialization completed")
 
 
 async def tavily_mcp_search(query: str):
@@ -142,21 +101,31 @@ async def tavily_mcp_search(query: str):
 
 
 
-async def aviation_mcp_call(
-    tool_name: str,
-    tool_args: dict = None
-):
+async def aviation_mcp_call(tool_name: str, tool_args: dict = None):
+
+    print(f"\n[MCP] aviation_mcp_call started")
+    print(f"[MCP] Requested tool: {tool_name}")
+    print("[MCP] Calling client.get_tools()...")
 
     tools = await client.get_tools()
+
+    print("[MCP] client.get_tools() completed")
+    print(f"[MCP] Total tools found: {len(tools)}")
+
+    for t in tools:
+        print(f" - {t.name}")
 
     tool = next(
         t for t in tools
         if t.name == tool_name
     )
 
-    result = await tool.ainvoke(
-        tool_args or {}
-    )
+    print(f"[MCP] Found tool: {tool.name}")
+    print("[MCP] Invoking tool...")
+
+    result = await tool.ainvoke(tool_args or {})
+
+    print("[MCP] Tool invocation completed")
 
     return result
 
@@ -188,9 +157,6 @@ async def get_airlines():
     result = await tool.ainvoke({})
 
     return result
-
-
-
 
 
 weather_tool = None
@@ -270,6 +236,3 @@ def extract_destination(query: str):
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
