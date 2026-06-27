@@ -1,11 +1,17 @@
 services:
 
-  # ── FastAPI Backend ──────────────────────────────────────────────────────
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
   - type: web
     name: multi-agent-ai-travel-booking-system-backend
     runtime: python
-    rootDir: backend
-    buildCommand: pip install uv && uv pip install --system -r requirements.txt
+    rootDir: BACKEND
+    pythonVersion: "3.12"
+    buildCommand: >
+      pip install uv &&
+      uv pip install --system -r requirements.txt &&
+      pip install python3.13 || apt-get install -y python3.13 || true &&
+      pip install --target=/opt/aviation313 --python-version=3.13
+      "aviationstack-mcp @ git+https://github.com/pradumnasaraf/aviationstack-mcp.git" || true
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
@@ -16,14 +22,20 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
+      - key: AVIATION_API_KEY
+        sync: false
+      - key: OPENWEATHER_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
     healthCheckPath: /health
     autoDeploy: true
 
-  # ── React Frontend (static site) ─────────────────────────────────────────
+  # ── React Frontend (static site) ───────────────────────────────────────────
   - type: web
     name: multi-agent-ai-travel-booking-system-frontend
     runtime: static
-    rootDir: frontend
+    rootDir: FRONTEND
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
@@ -39,4 +51,4 @@ databases:
   - name: lg_memory_travel_booking-system
     plan: free
     databaseName: lg_memory_travel_booking_system
-    user: travelai
+    user: postgres
