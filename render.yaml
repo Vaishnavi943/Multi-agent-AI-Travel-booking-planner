@@ -43,8 +43,3 @@ services:
         destination: /index.html
     autoDeploy: true
 
-databases:
-  - name: lg_memory_travel_booking-system
-    plan: free
-    databaseName: lg_memory_travel_booking_system
-    user: travelaiuser
