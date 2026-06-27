@@ -203,17 +203,27 @@ _checkpointer    = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _checkpointer_cm, _checkpointer
-    _checkpointer_cm = AsyncPostgresSaver.from_conn_string(DATABASE_URL)
-    _checkpointer    = await _checkpointer_cm.__aenter__()
-    await _checkpointer.setup()
-    app.state.graph  = build_graph().compile(checkpointer=_checkpointer)
-    logger.info("✅ LangGraph + PostgreSQL initialized")
     try:
-        yield
-    finally:
-        await _checkpointer_cm.__aexit__(None, None, None)
-        logger.info("🛑 Checkpointer closed")
+        global _checkpointer_cm, _checkpointer
+        _checkpointer_cm = AsyncPostgresSaver.from_conn_string(DATABASE_URL)
+        _checkpointer    = await _checkpointer_cm.__aenter__()
+        await _checkpointer.setup()
+        app.state.graph  = build_graph().compile(checkpointer=_checkpointer)
+        logger.info("✅ LangGraph + PostgreSQL initialized")
+    except Exception as e:
+        logger.error(f"❌ Startup error: {e}")
+        app.state.graph = None   # ← don't crash, just log
+    yield
+
+
+@app.get("/health")
+async def health(request: Request):
+    graph_ok = request.app.state.graph is not None
+    return {
+        "status": "ok" if graph_ok else "degraded",
+        "db_connected": graph_ok
+    }
+
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
