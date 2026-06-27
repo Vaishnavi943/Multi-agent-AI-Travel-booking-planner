@@ -113,8 +113,10 @@ async def flight_agent(state: TravelState):
         flight_data = response.content
         logger.info("Flight agent completed")
     except Exception as e:
-        logger.error(f"Flight agent error: {e}")
-        flight_data = "[]"
+        # logger.error(f"Flight agent error: {e}")
+        # flight_data = "[]"
+        logger.error(f"Flight agent error: {e}")   # already there
+        flight_data = f"[{{'airline':'Error','route':'{str(e)[:50]}','duration':'—','price':'—','class':'—','note':'check logs'}}]"
 
     return {
         "flight_results": flight_data,
@@ -152,11 +154,15 @@ async def weather_agent(state: TravelState):
     try:
         weather_data  = await weather_mcp_search(city)
         forecast_data = await forecast_mcp_search(city)
-        weather_str   = f"Current: {weather_data}\nForecast: {forecast_data}"
+        weather_json  = {
+            "current": weather_data,
+            "forecast": forecast_data,
+        }
+        weather_str   = json.dumps(weather_json)
         logger.info(f"Weather agent completed for city: {city}")
     except Exception as e:
         logger.error(f"Weather agent error: {e}")
-        weather_str = f"Weather unavailable: {str(e)}"
+        weather_str = json.dumps({"error": str(e)})
 
     return {
         "weather_results": weather_str,
