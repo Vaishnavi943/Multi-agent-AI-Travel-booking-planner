@@ -5,13 +5,9 @@ services:
     name: multi-agent-ai-travel-booking-system-backend
     runtime: python
     rootDir: BACKEND
-    pythonVersion: "3.12"
-    buildCommand: >
+    buildCommand: >-
       pip install uv &&
-      uv pip install --system -r requirements.txt &&
-      pip install python3.13 || apt-get install -y python3.13 || true &&
-      pip install --target=/opt/aviation313 --python-version=3.13
-      "aviationstack-mcp @ git+https://github.com/pradumnasaraf/aviationstack-mcp.git" || true
+      uv pip install --system -r requirements.txt
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
