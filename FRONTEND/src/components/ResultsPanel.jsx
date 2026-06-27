@@ -1,9 +1,32 @@
 import { useState } from "react";
 
+// Safely convert any value to a plain string for rendering
+function toText(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map(item => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          // LangChain message object: {type, text, id} or {type, content}
+          return item.text || item.content || JSON.stringify(item);
+        }
+        return String(item);
+      })
+      .join("\n");
+  }
+  if (typeof value === "object") {
+    return value.text || value.content || JSON.stringify(value, null, 2);
+  }
+  return String(value);
+}
+
 function ResultCard({ title, icon, content, colorClass, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
 
-  if (!content) return null;
+  const text = toText(content);
+  if (!text) return null;
 
   return (
     <div className={`result-card ${colorClass}`}>
@@ -21,7 +44,7 @@ function ResultCard({ title, icon, content, colorClass, defaultOpen = false }) {
 
       {open && (
         <div className="card-body">
-          <p className="card-text">{content}</p>
+          <p className="card-text">{text}</p>
         </div>
       )}
     </div>
