@@ -1,6 +1,9 @@
 from ast import main
 import os
 import asyncio
+import sys
+from pathlib import Path
+BASE_DIR = Path(__file__).parent
 
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -23,7 +26,8 @@ client = MultiServerMCPClient(
         # Local MCP Server
         "aviationstack": {
             "transport": "stdio",
-            "command": r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\aviationstack-mcp\.venv\Scripts\python.exe",
+            # "command": r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\aviationstack-mcp\.venv\Scripts\python.exe",
+             "command": sys.executable,
             "args": [
                 "-m",
                 "aviationstack_mcp",
@@ -38,9 +42,12 @@ client = MultiServerMCPClient(
         #Custome MCP Server
         "weather": {
             "transport": "stdio",
-            "command": r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\.venv\Scripts\python.exe",
+            "command":  sys.executable,
+            # "command": r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\.venv\Scripts\python.exe",
             "args": [
-                r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\custom_weather_mcp_server.py"
+                # r"D:\Projects-stuffs\Multi-Agent AI Travel Booking System\BACKEND\custom_weather_mcp_server.py"
+                # "custom_weather_mcp_server.py"
+                str(BASE_DIR / "custom_weather_mcp_server.py")
             ],
             "env": {
                 "OPENWEATHER_API_KEY": OPENWEATHER_API_KEY
