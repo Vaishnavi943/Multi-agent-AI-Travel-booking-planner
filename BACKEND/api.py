@@ -245,7 +245,7 @@ app = FastAPI(title="Travel AI API", lifespan=lifespan)
 # FIX 3: Add CORSMiddleware ONCE only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # change to [FRONTEND_URL] after production deploy
+    allow_origins=[FRONTEND_URL, "http://localhost:5173"],       
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
