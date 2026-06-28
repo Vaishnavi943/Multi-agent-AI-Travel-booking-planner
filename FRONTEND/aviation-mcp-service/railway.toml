@@ -1,0 +1,4 @@
+[deploy]
+startCommand = "python server.py"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"
