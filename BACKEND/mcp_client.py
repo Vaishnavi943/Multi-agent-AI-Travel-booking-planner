@@ -30,7 +30,7 @@ client = MultiServerMCPClient(
         "aviationstack": {
             "transport": "stdio",
             "command": sys.executable,
-            "args": [str(BASE_DIR / "custom_aviation_mcp_server.py")],
+            "args": [str(BASE_DIR / "custome_aviation_mcp_server.py")],
             "env": {
                 **os.environ.copy(),
                 "AVIATION_API_KEY": AVIATION_API_KEY,
