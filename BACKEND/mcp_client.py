@@ -1,6 +1,5 @@
 import os
 import sys
-import platform
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,51 +13,43 @@ BASE_DIR            = Path(__file__).parent
 TAVILY_API_KEY      = os.getenv("TAVILY_API_KEY")
 AVIATION_API_KEY    = os.getenv("AVIATION_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
-AVIATION_MCP_URL    = os.getenv("AVIATION_MCP_URL")  # set on Railway
 
-def _get_aviation_config():
-    if AVIATION_MCP_URL:
-        print(f"[MCP] Aviation using HTTP: {AVIATION_MCP_URL}")
-        return {
-            "transport": "streamable_http",
-            "url": f"{AVIATION_MCP_URL}/mcp",
-        }
-    elif platform.system() == "Windows":
-        venv_python = BASE_DIR / "aviationstack-mcp" / ".venv" / "Scripts" / "python.exe"
-        print(f"[MCP] Aviation using stdio Windows: {venv_python}")
-        return {
-            "transport": "stdio",
-            "command": str(venv_python),
-            "args": ["-m", "aviationstack_mcp", "mcp", "run"],
-            "env": {**os.environ.copy(), "AVIATION_API_KEY": AVIATION_API_KEY},
-        }
-    else:
-        venv_python = BASE_DIR / "aviationstack-mcp" / ".venv" / "bin" / "python"
-        print(f"[MCP] Aviation using stdio Linux: {venv_python}")
-        return {
-            "transport": "stdio",
-            "command": str(venv_python),
-            "args": ["-m", "aviationstack_mcp", "mcp", "run"],
-            "env": {**os.environ.copy(), "AVIATION_API_KEY": AVIATION_API_KEY},
-        }
+print(f"[MCP] Using Python: {sys.executable}")
+print(f"[MCP] AVIATION_API_KEY set: {bool(AVIATION_API_KEY)}")
 
-
+# ── Client ─────────────────────────────────────────────────────────────────────
+# Both aviation and weather use stdio with sys.executable
+# since custom_aviation_mcp_server.py is in the same BACKEND folder
+# and installed in the same venv — works locally AND on Railway
 client = MultiServerMCPClient(
     {
         "tavily": {
             "transport": "streamable_http",
             "url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}",
         },
-        "aviationstack": _get_aviation_config(),
+        "aviationstack": {
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [str(BASE_DIR / "custom_aviation_mcp_server.py")],
+            "env": {
+                **os.environ.copy(),
+                "AVIATION_API_KEY": AVIATION_API_KEY,
+            },
+        },
         "weather": {
             "transport": "stdio",
             "command": sys.executable,
             "args": [str(BASE_DIR / "custom_weather_mcp_server.py")],
-            "env": {**os.environ.copy(), "OPENWEATHER_API_KEY": OPENWEATHER_API_KEY},
+            "env": {
+                **os.environ.copy(),
+                "OPENWEATHER_API_KEY": OPENWEATHER_API_KEY,
+            },
         },
     }
 )
 
+
+# ── Public API ─────────────────────────────────────────────────────────────────
 
 async def tavily_mcp_search(query: str):
     async with client.session("tavily") as session:
@@ -100,6 +91,7 @@ async def forecast_mcp_search(city: str):
         return await tool.ainvoke({"city": city})
 
 
+# ── Destination extractor ──────────────────────────────────────────────────────
 def extract_destination(query: str) -> str:
     llm = ChatGroq(model="llama-3.3-70b-versatile")
     prompt = f"""Extract only the destination city or country from this query.
