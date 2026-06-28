@@ -1,89 +1,77 @@
-function safeStr(val) {
-  if (val === null || val === undefined) return "N/A";
-  if (typeof val === "object") return JSON.stringify(val);
-  return String(val);
-}
-
-function parseWeatherBlock(raw) {
+function parseWeatherText(raw) {
   if (!raw) return null;
-  // If it's already an object
-  if (typeof raw === "object" && !Array.isArray(raw)) return raw;
-  // Try JSON parse
-  try {
-    const str = typeof raw === "string" ? raw : JSON.stringify(raw);
-    // Extract JSON object from string like "Current: {...}\nForecast: {...}"
-    const match = str.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-  } catch {}
-  return null;
-}
 
-function parseAllWeather(raw) {
-  if (!raw) return { current: null, forecast: null, rawText: "" };
-
-  const text = typeof raw === "string" ? raw
+  let text = typeof raw === "string" ? raw
     : Array.isArray(raw) ? raw.map(i => i?.text || i?.content || JSON.stringify(i)).join("\n")
-    : JSON.stringify(raw, null, 2);
+    : JSON.stringify(raw);
 
-  // Split on Current / Forecast sections
-  const currentMatch  = text.match(/Current[:\s]*([\s\S]*?)(?=Forecast|$)/i);
-  const forecastMatch = text.match(/Forecast[:\s]*([\s\S]*?)$/i);
+  // Remove "type: text, text:" prefix that MCP adds
+  text = text.replace(/^type:\s*text,?\s*text:\s*/i, "").trim();
+  text = text.replace(/,?\s*id:\s*lc_[a-f0-9-]+/g, "").trim();
 
-  const currentRaw  = currentMatch?.[1]?.trim() || "";
-  const forecastRaw = forecastMatch?.[1]?.trim() || "";
+  const result = {};
+  const pairs = text.split(/,\s*\\n\s*|,\s*\n\s*/);
+  pairs.forEach(pair => {
+    const match = pair.replace(/\\n/g, "").match(/^(\w+(?:_\w+)*):\s*(.+)$/);
+    if (match) result[match[1].trim()] = match[2].trim();
+  });
 
-  // Try to parse each as JSON
-  let current  = null;
-  let forecast = null;
-
-  try { current  = JSON.parse(currentRaw);  } catch {}
-  try { forecast = JSON.parse(forecastRaw); } catch {}
-
-  // Handle list format like [{'type':...,'text':...}]
-  if (!current && currentRaw) {
-    const jsonMatch = currentRaw.match(/\{[^{}]*\}/g);
-    if (jsonMatch) {
-      try {
-        // replace single quotes with double for JSON parse
-        const fixed = jsonMatch[0].replace(/'/g, '"');
-        const parsed = JSON.parse(fixed);
-        current = parsed.text ? tryParseJSON(parsed.text) : parsed;
-      } catch {}
-    }
-  }
-
-  return { current, forecast, rawText: text, currentRaw, forecastRaw };
+  return Object.keys(result).length > 0 ? result : null;
 }
 
-function tryParseJSON(str) {
-  try { return JSON.parse(str); } catch { return null; }
+function parseForecastItems(raw) {
+  if (!raw) return [];
+
+  let text = typeof raw === "string" ? raw
+    : Array.isArray(raw) ? raw.map(i => i?.text || i?.content || JSON.stringify(i)).join("\n")
+    : JSON.stringify(raw);
+
+  text = text.replace(/^type:\s*text,?\s*text:\s*/i, "").trim();
+  text = text.replace(/,?\s*id:\s*lc_[a-f0-9-]+/g, "").trim();
+  text = text.replace(/^city:\s*[^,\\n]+[,\\n]\s*forecast:\s*/i, "").trim();
+
+  const items = [];
+  // Split on double newline patterns
+  const blocks = text.split(/\\n\s*,\s*\\n|\\n\\n/).filter(b => b.trim());
+
+  blocks.forEach(block => {
+    const obj = {};
+    block.split(/,\s*\\n\s*|\\n,\s*/).forEach(pair => {
+      const m = pair.replace(/\\n/g, "").trim().match(/^(\w+(?:_\w+)*):\s*(.+)$/);
+      if (m) obj[m[1].trim()] = m[2].trim();
+    });
+    if (obj.datetime || obj.temperature) items.push(obj);
+  });
+
+  return items;
 }
 
-function CurrentWeather({ data, rawText }) {
-  if (!data) {
-    // fallback: just show raw text cleaned up
-    return (
-      <div className="weather-raw">
-        {rawText?.split("\n").filter(l => l.trim()).map((line, i) => (
-          <p key={i} className="weather-text">{line.replace(/['"{}[\]]/g, "").trim()}</p>
-        ))}
-      </div>
-    );
-  }
+function getWeatherEmoji(cond) {
+  const c = (cond || "").toLowerCase();
+  if (c.includes("rain"))   return "🌧️";
+  if (c.includes("cloud"))  return "☁️";
+  if (c.includes("clear") || c.includes("sun")) return "☀️";
+  if (c.includes("snow"))   return "❄️";
+  if (c.includes("storm"))  return "⛈️";
+  if (c.includes("fog") || c.includes("mist")) return "🌫️";
+  return "🌤️";
+}
 
-  const city        = data.city        || data.name        || data.location || "—";
-  const temp        = data.temperature || data.temp        || data.main?.temp || "—";
-  const feels       = data.feels_like  || data.feelsLike   || data.main?.feels_like || "—";
-  const humidity    = data.humidity    || data.main?.humidity || "—";
-  const description = data.description || data.weather?.[0]?.description || data.condition || "—";
-  const wind        = data.wind_speed  || data.wind?.speed || data.windSpeed || "—";
+function WeatherCard({ data }) {
+  if (!data) return null;
+  const city     = data.city           || "—";
+  const temp     = data.temperature_c  || data.temperature || "—";
+  const feels    = data.feels_like_c   || data.feels_like  || "—";
+  const humidity = data.humidity       || "—";
+  const condition= data.condition      || data.weather     || "—";
+  const wind     = data.wind_speed     || "—";
 
   return (
     <div className="weather-card">
       <div className="weather-card-top">
         <div>
           <p className="weather-city">📍 {city}</p>
-          <p className="weather-desc">{description}</p>
+          <p className="weather-desc">{getWeatherEmoji(condition)} {condition}</p>
         </div>
         <div className="weather-temp">{temp !== "—" ? `${temp}°C` : "—"}</div>
       </div>
@@ -96,40 +84,20 @@ function CurrentWeather({ data, rawText }) {
   );
 }
 
-function ForecastWeather({ data, rawText }) {
-  // data could be array of forecast items or an object with a list
-  let items = [];
-
-  if (Array.isArray(data)) {
-    items = data;
-  } else if (data?.forecast && Array.isArray(data.forecast)) {
-    items = data.forecast;
-  } else if (data?.list && Array.isArray(data.list)) {
-    items = data.list;
-  }
-
-  if (items.length === 0) {
-    // fallback raw text
-    return (
-      <div className="weather-raw">
-        {rawText?.split("\n").filter(l => l.trim()).slice(0, 8).map((line, i) => (
-          <p key={i} className="weather-text">{line.replace(/['"{}[\]]/g, "").trim()}</p>
-        ))}
-      </div>
-    );
-  }
-
+function ForecastGrid({ items }) {
+  if (!items || items.length === 0) return null;
   return (
     <div className="forecast-grid">
       {items.slice(0, 6).map((item, i) => {
-        const time  = item.datetime || item.dt_txt || item.time || item.date || `Slot ${i + 1}`;
-        const temp  = item.temperature || item.temp || item.main?.temp || "—";
-        const desc  = item.weather     || item.description || item.weather?.[0]?.description || "—";
+        const dt   = (item.datetime || "").replace("T", " ").slice(0, 16);
+        const temp = item.temperature || "—";
+        const cond = item.weather || item.condition || "—";
         return (
           <div key={i} className="forecast-item">
-            <p className="forecast-time">{String(time).replace("T", " ").slice(0, 16)}</p>
+            <p className="forecast-time">{dt || `Slot ${i + 1}`}</p>
+            <p className="forecast-emoji">{getWeatherEmoji(cond)}</p>
             <p className="forecast-temp">{temp !== "—" ? `${temp}°C` : "—"}</p>
-            <p className="forecast-desc">{safeStr(desc)}</p>
+            <p className="forecast-desc">{cond}</p>
           </div>
         );
       })}
@@ -140,15 +108,31 @@ function ForecastWeather({ data, rawText }) {
 export default function WeatherPanel({ raw }) {
   if (!raw) return <div className="empty-state"><p>Weather data loading...</p></div>;
 
-  const { current, forecast, rawText, currentRaw, forecastRaw } = parseAllWeather(raw);
+  const text = typeof raw === "string" ? raw
+    : Array.isArray(raw) ? raw.map(i => i?.text || i?.content || JSON.stringify(i)).join("\n")
+    : JSON.stringify(raw);
+
+  const currentMatch  = text.match(/Current:\s*([\s\S]*?)(?=\nForecast:|$)/i);
+  const forecastMatch = text.match(/Forecast:\s*([\s\S]*?)$/i);
+
+  const currentRaw   = currentMatch?.[1]?.trim()  || "";
+  const forecastRaw  = forecastMatch?.[1]?.trim() || "";
+  const currentData  = parseWeatherText(currentRaw);
+  const forecastItems = parseForecastItems(forecastRaw);
 
   return (
     <div className="weather-panel">
       <h3 className="weather-section-title">🌤️ Current Weather</h3>
-      <CurrentWeather data={current} rawText={currentRaw || rawText} />
-
-      <h3 className="weather-section-title" style={{ marginTop: "1.5rem" }}>📅 Forecast</h3>
-      <ForecastWeather data={forecast} rawText={forecastRaw || rawText} />
+      {currentData
+        ? <WeatherCard data={currentData} />
+        : <p className="weather-text">{currentRaw.replace(/\\n/g, " ").replace(/type:\s*text,?\s*text:\s*/i, "").trim()}</p>
+      }
+      {forecastItems.length > 0 && (
+        <>
+          <h3 className="weather-section-title" style={{ marginTop: "1.5rem" }}>📅 Forecast</h3>
+          <ForecastGrid items={forecastItems} />
+        </>
+      )}
     </div>
   );
 }
