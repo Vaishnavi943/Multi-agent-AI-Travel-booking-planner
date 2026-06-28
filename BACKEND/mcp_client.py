@@ -25,8 +25,8 @@ def _get_aviation_config():
         # ✅ Production — connect via HTTP SSE to separate Railway service
         print(f"[MCP] Aviation using HTTP transport: {AVIATION_MCP_URL}")
         return {
-            "transport": "sse",
-            "url": f"{AVIATION_MCP_URL}/sse",
+            "transport": "streamable_http",
+            "url": f"{AVIATION_MCP_URL}/mcp",
         }
     elif platform.system() == "Windows":
         # ✅ Local Windows — use nested Python 3.13 venv
