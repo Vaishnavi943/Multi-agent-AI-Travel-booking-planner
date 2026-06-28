@@ -1,22 +1,23 @@
 """
-HTTP wrapper for aviationstack-mcp using FastMCP streamable-http transport.
+HTTP wrapper for aviationstack-mcp.
+Forces FastMCP to use Railway's PORT and bind to 0.0.0.0.
 """
 import os
+import sys
 
+# Must set these BEFORE importing FastMCP
 port = int(os.getenv("PORT", 8080))
+os.environ["HOST"] = "0.0.0.0"
+os.environ["PORT"] = str(port)
 
-from aviationstack_mcp import mcp  # FastMCP instance
+print(f"[aviation-mcp] Starting on 0.0.0.0:{port}")
+
+from aviationstack_mcp import mcp
 
 if __name__ == "__main__":
-    print(f"[aviation-mcp] Starting on port {port}")
-    try:
-        # Try streamable-http first (recommended for new projects)
-        mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
-    except TypeError:
-        try:
-            # Fallback: sse transport
-            mcp.run(transport="sse", host="0.0.0.0", port=port)
-        except TypeError:
-            # Last resort: no port arg (older FastMCP)
-            os.environ["PORT"] = str(port)
-            mcp.run(transport="sse")
+    # FastMCP streamable-http with explicit host and port
+    mcp.run(
+        transport="streamable-http",
+        host="0.0.0.0",
+        port=port,
+    )
