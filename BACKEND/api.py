@@ -216,15 +216,6 @@ async def lifespan(app: FastAPI):
     yield
 
 
-@app.get("/health")
-async def health(request: Request):
-    graph_ok = request.app.state.graph is not None
-    return {
-        "status": "ok" if graph_ok else "degraded",
-        "db_connected": graph_ok
-    }
-
-
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(title="Travel AI API", lifespan=lifespan)
@@ -256,8 +247,12 @@ class TravelResponse(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
-async def health():
-    return {"status": "ok"}
+async def health(request: Request):
+    graph_ok = request.app.state.graph is not None
+    return {
+        "status": "ok" if graph_ok else "degraded",
+        "db_connected": graph_ok
+    }
 
 
 @app.post("/api/travel", response_model=TravelResponse)
