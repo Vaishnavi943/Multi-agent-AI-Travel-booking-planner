@@ -14,24 +14,18 @@ BASE_DIR            = Path(__file__).parent
 TAVILY_API_KEY      = os.getenv("TAVILY_API_KEY")
 AVIATION_API_KEY    = os.getenv("AVIATION_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
-
-# ── Aviation MCP URL ───────────────────────────────────────────────────────────
-# Local: uses stdio (nested Python 3.13 venv)
-# Production: uses HTTP (separate Railway service)
-AVIATION_MCP_URL = os.getenv("AVIATION_MCP_URL")  # set this in Railway
+AVIATION_MCP_URL    = os.getenv("AVIATION_MCP_URL")  # set on Railway
 
 def _get_aviation_config():
     if AVIATION_MCP_URL:
-        # ✅ Production — connect via HTTP SSE to separate Railway service
-        print(f"[MCP] Aviation using HTTP transport: {AVIATION_MCP_URL}")
+        print(f"[MCP] Aviation using HTTP: {AVIATION_MCP_URL}")
         return {
             "transport": "streamable_http",
             "url": f"{AVIATION_MCP_URL}/mcp",
         }
     elif platform.system() == "Windows":
-        # ✅ Local Windows — use nested Python 3.13 venv
         venv_python = BASE_DIR / "aviationstack-mcp" / ".venv" / "Scripts" / "python.exe"
-        print(f"[MCP] Aviation using stdio (Windows): {venv_python}")
+        print(f"[MCP] Aviation using stdio Windows: {venv_python}")
         return {
             "transport": "stdio",
             "command": str(venv_python),
@@ -39,9 +33,8 @@ def _get_aviation_config():
             "env": {**os.environ.copy(), "AVIATION_API_KEY": AVIATION_API_KEY},
         }
     else:
-        # Linux local fallback
         venv_python = BASE_DIR / "aviationstack-mcp" / ".venv" / "bin" / "python"
-        print(f"[MCP] Aviation using stdio (Linux): {venv_python}")
+        print(f"[MCP] Aviation using stdio Linux: {venv_python}")
         return {
             "transport": "stdio",
             "command": str(venv_python),
@@ -50,7 +43,6 @@ def _get_aviation_config():
         }
 
 
-# ── Client ─────────────────────────────────────────────────────────────────────
 client = MultiServerMCPClient(
     {
         "tavily": {
@@ -67,8 +59,6 @@ client = MultiServerMCPClient(
     }
 )
 
-
-# ── Public API ─────────────────────────────────────────────────────────────────
 
 async def tavily_mcp_search(query: str):
     async with client.session("tavily") as session:
@@ -110,7 +100,6 @@ async def forecast_mcp_search(city: str):
         return await tool.ainvoke({"city": city})
 
 
-# ── Destination extractor ──────────────────────────────────────────────────────
 def extract_destination(query: str) -> str:
     llm = ChatGroq(model="llama-3.3-70b-versatile")
     prompt = f"""Extract only the destination city or country from this query.
