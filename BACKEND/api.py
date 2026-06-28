@@ -6,7 +6,7 @@ import os
 import uuid
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional, Annotated
+from typing import Optional, Annotated, List
 
 import dotenv
 dotenv.load_dotenv()
@@ -23,35 +23,35 @@ from langchain_groq import ChatGroq
 from typing import TypedDict
 import operator
 import json
-
-from mcp_client import (
-    tavily_mcp_search,
-    aviation_mcp_call,
-    extract_destination,
-    forecast_mcp_search,
-    weather_mcp_search,
-)
+import psycopg
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
+logger.info(f"DATABASE_URL set: {bool(DATABASE_URL)}")
+logger.info(f"GROQ_API_KEY set: {bool(GROQ_API_KEY)}")
+
 if not GROQ_API_KEY:
-    raise RuntimeError("Missing GROQ_API_KEY in environment.")
+    raise RuntimeError("Missing GROQ_API_KEY")
+if not DATABASE_URL:
+    raise RuntimeError("Missing DATABASE_URL")
 
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 
 
+
 # ── State ─────────────────────────────────────────────────────────────────────
 class TravelState(TypedDict):
-    messages: Annotated[list[AnyMessage], operator.add]
-    user_query: str
-    flight_results: str
-    hotel_results: str
-    itinerary: str
-    llm_calls: int
+    messages:        Annotated[list[AnyMessage], operator.add]
+    user_query:      str
+    flight_results:  str
+    hotel_results:   str
+    itinerary:       str
+    llm_calls:       int
     weather_results: str
 
 
+# ── Prompts ───────────────────────────────────────────────────────────────────
 FLIGHT_PROMPT = """
 You are a travel flight expert. User Query: {query}
 Airport Info: {airport_data}
@@ -86,43 +86,75 @@ Return EXACTLY 3 hotel options as a JSON array (no extra text):
 ]
 """
 
+FLIGHT_FALLBACK = """
+Based on your knowledge, suggest 3 realistic flight options for: {query}
+
+Return EXACTLY 3 flight options as a JSON array (no extra text):
+[
+  {{
+    "airline": "Airline Name",
+    "route": "ORIGIN → DEST",
+    "duration": "Xh Ym",
+    "price": "estimated price",
+    "class": "Economy",
+    "note": "any relevant note"
+  }}
+]
+"""
+
+WEATHER_FALLBACK = """
+Provide typical weather for {city} for the travel period in: {query}
+Cover: temperature range, conditions, packing tips. Keep it brief.
+"""
+
 
 # ── Agents ────────────────────────────────────────────────────────────────────
 async def flight_agent(state: TravelState):
     query = state["user_query"]
     try:
+        from mcp_client import aviation_mcp_call
         airports = await aviation_mcp_call("list_airports")
         airlines = await aviation_mcp_call("list_airlines")
-        prompt = FLIGHT_PROMPT.format(
+        prompt   = FLIGHT_PROMPT.format(
             query=query,
             airport_data=str(airports)[:2000],
             airline_data=str(airlines)[:2000],
         )
-        response = await llm.ainvoke([
+        response    = await llm.ainvoke([
             SystemMessage(content="Return only valid JSON arrays, no markdown."),
             HumanMessage(content=prompt),
         ])
         flight_data = response.content
-        logger.info("Flight agent completed")
+        logger.info("Flight agent completed via MCP")
     except Exception as e:
-        logger.error(f"Flight agent error: {e}")
-        flight_data = "[]"
+        logger.warning(f"Aviation MCP failed ({e}), using LLM fallback")
+        try:
+            response    = await llm.ainvoke([
+                SystemMessage(content="Return only valid JSON arrays, no markdown."),
+                HumanMessage(content=FLIGHT_FALLBACK.format(query=query)),
+            ])
+            flight_data = response.content
+            logger.info("Flight agent completed via LLM fallback")
+        except Exception as e2:
+            logger.error(f"Flight fallback failed: {e2}")
+            flight_data = "[]"
 
     return {
         "flight_results": flight_data,
-        "messages": [AIMessage(content="Flights found")],
-        "llm_calls": state.get("llm_calls", 0) + 1,
+        "messages":       [AIMessage(content="Flights found")],
+        "llm_calls":      state.get("llm_calls", 0) + 1,
     }
 
 
 async def hotel_agent(state: TravelState):
     try:
+        from mcp_client import tavily_mcp_search
         search_data = await tavily_mcp_search(f"Best hotels for {state['user_query']}")
-        prompt = HOTEL_PROMPT.format(
+        prompt      = HOTEL_PROMPT.format(
             query=state["user_query"],
             search_data=str(search_data)[:2000],
         )
-        response = await llm.ainvoke([
+        response   = await llm.ainvoke([
             SystemMessage(content="Return only valid JSON arrays, no markdown."),
             HumanMessage(content=prompt),
         ])
@@ -134,25 +166,41 @@ async def hotel_agent(state: TravelState):
 
     return {
         "hotel_results": hotel_data,
-        "messages": [AIMessage(content="Hotels found")],
-        "llm_calls": state.get("llm_calls", 0) + 1,
+        "messages":      [AIMessage(content="Hotels found")],
+        "llm_calls":     state.get("llm_calls", 0) + 1,
     }
 
 
 async def weather_agent(state: TravelState):
-    city = extract_destination(state["user_query"])
     try:
+        from mcp_client import weather_mcp_search, forecast_mcp_search, extract_destination
+        city          = extract_destination(state["user_query"])
         weather_data  = await weather_mcp_search(city)
         forecast_data = await forecast_mcp_search(city)
         weather_str   = f"Current: {weather_data}\nForecast: {forecast_data}"
         logger.info(f"Weather agent completed for: {city}")
     except Exception as e:
-        logger.error(f"Weather agent error: {e}")
-        weather_str = f"Weather unavailable: {str(e)}"
+        logger.warning(f"Weather MCP failed ({e}), using LLM fallback")
+        try:
+            from mcp_client import extract_destination
+            city = extract_destination(state["user_query"])
+        except Exception:
+            city = "the destination"
+        try:
+            response    = await llm.ainvoke([
+                SystemMessage(content="You are a travel weather expert."),
+                HumanMessage(content=WEATHER_FALLBACK.format(
+                    city=city, query=state["user_query"]
+                )),
+            ])
+            weather_str = response.content
+        except Exception as e2:
+            logger.error(f"Weather fallback failed: {e2}")
+            weather_str = "Weather information unavailable."
 
     return {
         "weather_results": weather_str,
-        "messages": [AIMessage(content="Weather fetched")],
+        "messages":        [AIMessage(content="Weather fetched")],
     }
 
 
@@ -163,7 +211,7 @@ Query: {state['user_query']}
 Flights: {state['flight_results']}
 Hotels: {state['hotel_results']}
 Weather: {state['weather_results']}
-Format as clear day-by-day plan with specific timings.
+Format as clear day-by-day plan with specific timings and activities.
 """
     try:
         response = await llm.ainvoke([
@@ -177,7 +225,7 @@ Format as clear day-by-day plan with specific timings.
 
     return {
         "itinerary": response.content,
-        "messages": [response],
+        "messages":  [response],
         "llm_calls": state.get("llm_calls", 0) + 1,
     }
 
@@ -203,28 +251,37 @@ _checkpointer    = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _checkpointer_cm, _checkpointer
     try:
-        global _checkpointer_cm, _checkpointer
+        logger.info("Connecting to DB...")
         _checkpointer_cm = AsyncPostgresSaver.from_conn_string(DATABASE_URL)
         _checkpointer    = await _checkpointer_cm.__aenter__()
         await _checkpointer.setup()
-        app.state.graph  = build_graph().compile(checkpointer=_checkpointer)
+        app.state.graph        = build_graph().compile(checkpointer=_checkpointer)
+        app.state.checkpointer = _checkpointer
+        app.state.db_ok        = True
         logger.info("✅ LangGraph + PostgreSQL initialized")
     except Exception as e:
-        logger.error(f"❌ Startup error: {e}")
-        app.state.graph = None   # ← don't crash, just log
+        logger.error(f"❌ Startup DB error: {e}")
+        app.state.graph        = None
+        app.state.checkpointer = None
+        app.state.db_ok        = False
     yield
-
+    if _checkpointer_cm:
+        try:
+            await _checkpointer_cm.__aexit__(None, None, None)
+            logger.info("🛑 Checkpointer closed")
+        except Exception as e:
+            logger.error(f"Cleanup error: {e}")
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(title="Travel AI API", lifespan=lifespan)
 
-# ✅ Allow all origins — safe for now, tighten after everything works
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,   # must be False when allow_origins=["*"]
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -232,34 +289,45 @@ app.add_middleware(
 
 # ── Models ────────────────────────────────────────────────────────────────────
 class TravelRequest(BaseModel):
-    query: str
+    query:     str
     thread_id: Optional[str] = None
 
 
 class TravelResponse(BaseModel):
-    thread_id: str
-    flight_results: str
-    hotel_results: str
+    thread_id:       str
+    flight_results:  str
+    hotel_results:   str
     weather_results: str
-    itinerary: str
-    llm_calls: int
+    itinerary:       str
+    llm_calls:       int
+
+
+class SessionSummary(BaseModel):
+    thread_id:  str
+    query:      str
+    created_at: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health(request: Request):
-    graph_ok = request.app.state.graph is not None
+    db_ok = getattr(request.app.state, "db_ok", False)
     return {
-        "status": "ok" if graph_ok else "degraded",
-        "db_connected": graph_ok
+        "status":           "ok",
+        "db_connected":     db_ok,
+        "database_url_set": bool(DATABASE_URL),
+        "groq_key_set":     bool(GROQ_API_KEY),
     }
 
 
 @app.post("/api/travel", response_model=TravelResponse)
 async def travel(req: TravelRequest, request: Request):
+    graph_app = request.app.state.graph
+    if not graph_app:
+        raise HTTPException(status_code=503, detail="Database not connected.")
+
     thread_id = req.thread_id or str(uuid.uuid4())
     config    = {"configurable": {"thread_id": thread_id}}
-    graph_app = request.app.state.graph
 
     try:
         result = await graph_app.ainvoke(
@@ -280,20 +348,23 @@ async def travel(req: TravelRequest, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
     return TravelResponse(
-        thread_id      = thread_id,
-        flight_results = result.get("flight_results",  "[]"),
-        hotel_results  = result.get("hotel_results",   "[]"),
-        weather_results= result.get("weather_results", ""),
-        itinerary      = result.get("itinerary",       ""),
-        llm_calls      = result.get("llm_calls",       0),
+        thread_id       = thread_id,
+        flight_results  = result.get("flight_results",  "[]"),
+        hotel_results   = result.get("hotel_results",   "[]"),
+        weather_results = result.get("weather_results", ""),
+        itinerary       = result.get("itinerary",       ""),
+        llm_calls       = result.get("llm_calls",       0),
     )
 
 
 @app.post("/api/travel/stream")
 async def travel_stream(req: TravelRequest, request: Request):
+    graph_app = request.app.state.graph
+    if not graph_app:
+        raise HTTPException(status_code=503, detail="Database not connected.")
+
     thread_id = req.thread_id or str(uuid.uuid4())
     config    = {"configurable": {"thread_id": thread_id}}
-    graph_app = request.app.state.graph
 
     async def event_generator():
         agent_labels = {
@@ -334,3 +405,84 @@ async def travel_stream(req: TravelRequest, request: Request):
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ── NEW: Resume / History endpoints ───────────────────────────────────────────
+
+@app.get("/api/sessions")
+async def get_sessions(request: Request):
+    """Get all past travel sessions from PostgreSQL."""
+    if not request.app.state.db_ok:
+        raise HTTPException(status_code=503, detail="Database not connected.")
+    try:
+        async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    SELECT DISTINCT
+                        thread_id,
+                        checkpoint->>'ts' as created_at,
+                        metadata->'writes'->'__start__'->'user_query' as query
+                    FROM checkpoints
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                """)
+                rows = await cur.fetchall()
+                sessions = []
+                for row in rows:
+                    thread_id, created_at, query = row
+                    sessions.append({
+                        "thread_id":  thread_id,
+                        "query":      str(query).strip('"') if query else "Travel query",
+                        "created_at": created_at or "",
+                    })
+                return {"sessions": sessions}
+    except Exception as e:
+        logger.error(f"Sessions fetch error: {e}")
+        return {"sessions": []}
+
+
+@app.get("/api/sessions/{thread_id}")
+async def get_session(thread_id: str, request: Request):
+    """Resume a specific past session by thread_id."""
+    graph_app = request.app.state.graph
+    if not graph_app:
+        raise HTTPException(status_code=503, detail="Database not connected.")
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        state  = await graph_app.aget_state(config)
+        if not state or not state.values:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        values = state.values
+        return {
+            "thread_id":       thread_id,
+            "user_query":      values.get("user_query",      ""),
+            "flight_results":  values.get("flight_results",  "[]"),
+            "hotel_results":   values.get("hotel_results",   "[]"),
+            "weather_results": values.get("weather_results", ""),
+            "itinerary":       values.get("itinerary",       ""),
+            "llm_calls":       values.get("llm_calls",       0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Session resume error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/sessions/{thread_id}")
+async def delete_session(thread_id: str, request: Request):
+    """Delete a session from PostgreSQL."""
+    if not request.app.state.db_ok:
+        raise HTTPException(status_code=503, detail="Database not connected.")
+    try:
+        async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "DELETE FROM checkpoints WHERE thread_id = %s",
+                    (thread_id,)
+                )
+                await conn.commit()
+        return {"deleted": True, "thread_id": thread_id}
+    except Exception as e:
+        logger.error(f"Session delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
