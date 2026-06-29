@@ -30,17 +30,16 @@ function safeParseJSON(str) {
 }
 
 export default function App() {
-  const [steps, setSteps]           = useState(INITIAL_STEPS);
-  const [results, setResults]       = useState(null);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState("");
-  const [threadId, setThreadId]     = useState(null);
-  const [activeTab, setActiveTab]   = useState("flights");
+  const [steps, setSteps]             = useState(INITIAL_STEPS);
+  const [results, setResults]         = useState(null);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState("");
+  const [threadId, setThreadId]       = useState(null);
+  const [activeTab, setActiveTab]     = useState("flights");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sessions, setSessions]     = useState([]);
+  const [sessions, setSessions]       = useState([]);
   const resultsRef = useRef(null);
 
-  // Load sessions on mount
   useEffect(() => { fetchSessions(); }, []);
 
   useEffect(() => {
@@ -49,20 +48,14 @@ export default function App() {
     }
   }, [results]);
 
-  
   const fetchSessions = async () => {
-  try {
-    const res = await fetch(`${API_BASE}/api/sessions`);
-    if (!res.ok) {
-      setSessions([]);   // ← silently fail, don't crash
-      return;
-    }
-    const data = await res.json();
-    setSessions(data.sessions || []);
-  } catch {
-    setSessions([]);     // ← network error, just show empty sidebar
-  }
-};
+    try {
+      const res  = await fetch(`${API_BASE}/api/sessions`);
+      if (!res.ok) { setSessions([]); return; }
+      const data = await res.json();
+      setSessions(data.sessions || []);
+    } catch { setSessions([]); }
+  };
 
   const markStep = (nodeId, status) =>
     setSteps(prev => prev.map(s => s.id === nodeId ? { ...s, status } : s));
@@ -74,13 +67,12 @@ export default function App() {
     setActiveTab("flights");
   };
 
-  // Resume a past session
   const handleResume = async (session) => {
     resetState();
     setLoading(true);
     setSidebarOpen(false);
     try {
-      const res  = await fetch(`${API_BASE}/api/sessions/${session.thread_id}`);
+      const res = await fetch(`${API_BASE}/api/sessions/${session.thread_id}`);
       if (!res.ok) throw new Error("Session not found");
       const data = await res.json();
       setResults(data);
@@ -93,12 +85,29 @@ export default function App() {
     }
   };
 
-  const handleDeleteSession = async (threadId, e) => {
+  // ✅ Fixed delete — properly removes from state
+  const handleDeleteSession = async (sessionThreadId, e) => {
     e.stopPropagation();
+    e.preventDefault();
     try {
-      await fetch(`${API_BASE}/api/sessions/${threadId}`, { method: "DELETE" });
-      setSessions(prev => prev.filter(s => s.thread_id !== threadId));
-    } catch { }
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionThreadId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        // Remove from local state immediately
+        setSessions(prev => prev.filter(s => s.thread_id !== sessionThreadId));
+        // If currently viewing this session, clear it
+        if (threadId === sessionThreadId) {
+          resetState();
+          setThreadId(null);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setError(err.detail || "Could not delete session.");
+      }
+    } catch {
+      setError("Network error — could not delete session.");
+    }
   };
 
   const handleSearch = async (query) => {
@@ -151,8 +160,12 @@ export default function App() {
               setSteps(prev => prev.map(s => ({ ...s, status: "done" })));
               setThreadId(event.thread_id);
               setLoading(false);
-              // Refresh sidebar sessions
-              fetchSessions();
+              // Add new session to sidebar immediately
+              setSessions(prev => [{
+                thread_id:  event.thread_id,
+                query:      query,
+                created_at: new Date().toISOString(),
+              }, ...prev.filter(s => s.thread_id !== event.thread_id)]);
             }
             if (event.type === "error") throw new Error(event.message);
           } catch { }
@@ -177,11 +190,13 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Sticky Header */}
       <Header
         onMenuClick={() => setSidebarOpen(o => !o)}
         sessionCount={sessions.length}
       />
 
+      {/* Sidebar */}
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -192,6 +207,7 @@ export default function App() {
         onNewChat={() => { resetState(); setThreadId(null); setSidebarOpen(false); }}
       />
 
+      {/* Overlay */}
       {sidebarOpen && (
         <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
       )}
@@ -213,6 +229,7 @@ export default function App() {
 
             {results && (
               <div className="tabs-container">
+                {/* Sticky tab nav */}
                 <div className="tabs-nav" role="tablist">
                   {TABS.map(tab => (
                     <button
@@ -228,16 +245,12 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+
                 <div className="tab-content">
                   {activeTab === "flights"   && <FlightCards flights={flights} />}
                   {activeTab === "hotels"    && <HotelCards  hotels={hotels}   />}
                   {activeTab === "weather"   && <WeatherPanel raw={results.weather_results} />}
-                  {activeTab === "itinerary" && (
-                    <ItineraryPanel
-                      text={results.itinerary}
-                      streaming={loading && !results.itinerary}
-                    />
-                  )}
+                  {activeTab === "itinerary" && <ItineraryPanel text={results.itinerary} streaming={loading} />}
                 </div>
               </div>
             )}
