@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Header from "./components/Header";
 import Sidebar from "./components/Sidebar";
 import TravelForm from "./components/TravelForm";
@@ -38,9 +38,28 @@ export default function App() {
   const [activeTab, setActiveTab]     = useState("flights");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessions, setSessions]       = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const resultsRef = useRef(null);
 
-  useEffect(() => { fetchSessions(); }, []);
+  // ✅ Fetch sessions on every mount and page refresh
+  const fetchSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      const res  = await fetch(`${API_BASE}/api/sessions`);
+      if (!res.ok) { setSessions([]); return; }
+      const data = await res.json();
+      setSessions(data.sessions || []);
+    } catch {
+      setSessions([]);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  // ✅ Fetch sessions on page load — persists across refresh
+  useEffect(() => {
+    fetchSessions();
+  }, [fetchSessions]);
 
   useEffect(() => {
     if (results && resultsRef.current) {
@@ -48,44 +67,47 @@ export default function App() {
     }
   }, [results]);
 
-  const fetchSessions = async () => {
-    try {
-      const res  = await fetch(`${API_BASE}/api/sessions`);
-      if (!res.ok) { setSessions([]); return; }
-      const data = await res.json();
-      setSessions(data.sessions || []);
-    } catch { setSessions([]); }
-  };
-
   const markStep = (nodeId, status) =>
     setSteps(prev => prev.map(s => s.id === nodeId ? { ...s, status } : s));
 
-  const resetState = () => {
+  // ✅ Full reset — clears everything including scroll position
+  const resetState = useCallback(() => {
     setSteps(INITIAL_STEPS);
     setResults(null);
     setError("");
     setActiveTab("flights");
-  };
+    setThreadId(null);
+    // Scroll back to top
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  // ✅ New Trip — properly resets and closes sidebar
+  const handleNewChat = useCallback(() => {
+    resetState();
+    setSidebarOpen(false);
+  }, [resetState]);
 
   const handleResume = async (session) => {
-    resetState();
+    setError("");
     setLoading(true);
     setSidebarOpen(false);
+    // Reset steps to done immediately for UX
+    setSteps(INITIAL_STEPS.map(s => ({ ...s, status: "done" })));
     try {
       const res = await fetch(`${API_BASE}/api/sessions/${session.thread_id}`);
       if (!res.ok) throw new Error("Session not found");
       const data = await res.json();
       setResults(data);
       setThreadId(session.thread_id);
-      setSteps(prev => prev.map(s => ({ ...s, status: "done" })));
+      setActiveTab("flights");
     } catch (e) {
       setError(e.message || "Could not resume session.");
+      setSteps(INITIAL_STEPS);
     } finally {
       setLoading(false);
     }
   };
 
-  // ✅ Fixed delete — properly removes from state
   const handleDeleteSession = async (sessionThreadId, e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -94,36 +116,36 @@ export default function App() {
         method: "DELETE",
       });
       if (res.ok) {
-        // Remove from local state immediately
         setSessions(prev => prev.filter(s => s.thread_id !== sessionThreadId));
-        // If currently viewing this session, clear it
-        if (threadId === sessionThreadId) {
-          resetState();
-          setThreadId(null);
-        }
+        if (threadId === sessionThreadId) resetState();
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.detail || "Could not delete session.");
       }
     } catch {
-      setError("Network error — could not delete session.");
+      setError("Network error — could not delete.");
     }
   };
 
   const handleSearch = async (query) => {
-    resetState();
+    // Reset everything but keep sessions
+    setSteps(INITIAL_STEPS);
+    setResults(null);
+    setError("");
+    setActiveTab("flights");
     setLoading(true);
 
-    const collected = {
+    const newThreadId = threadId || undefined;
+    const collected   = {
       flight_results: "", hotel_results: "",
       weather_results: "", itinerary: "", user_query: query,
     };
 
     try {
       const resp = await fetch(`${API_BASE}/api/travel/stream`, {
-        method: "POST",
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, thread_id: threadId }),
+        body:    JSON.stringify({ query, thread_id: newThreadId }),
       });
 
       if (!resp.ok) {
@@ -147,6 +169,7 @@ export default function App() {
           if (!line.startsWith("data:")) continue;
           try {
             const event = JSON.parse(line.slice(5).trim());
+
             if (event.type === "progress") {
               markStep(event.node, "active");
               if (event.data) {
@@ -156,17 +179,22 @@ export default function App() {
               const idx = INITIAL_STEPS.findIndex(s => s.id === event.node);
               if (idx > 0) markStep(INITIAL_STEPS[idx - 1].id, "done");
             }
+
             if (event.type === "done") {
               setSteps(prev => prev.map(s => ({ ...s, status: "done" })));
               setThreadId(event.thread_id);
               setLoading(false);
-              // Add new session to sidebar immediately
-              setSessions(prev => [{
-                thread_id:  event.thread_id,
-                query:      query,
-                created_at: new Date().toISOString(),
-              }, ...prev.filter(s => s.thread_id !== event.thread_id)]);
+              // ✅ Add to sidebar immediately with real query name
+              setSessions(prev => {
+                const filtered = prev.filter(s => s.thread_id !== event.thread_id);
+                return [{
+                  thread_id:  event.thread_id,
+                  query:      query,
+                  created_at: new Date().toISOString(),
+                }, ...filtered];
+              });
             }
+
             if (event.type === "error") throw new Error(event.message);
           } catch { }
         }
@@ -190,29 +218,29 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Sticky Header */}
       <Header
         onMenuClick={() => setSidebarOpen(o => !o)}
         sessionCount={sessions.length}
+        onLogoClick={handleNewChat}
       />
 
-      {/* Sidebar */}
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         sessions={sessions}
+        sessionsLoading={sessionsLoading}
         activeThreadId={threadId}
         onResume={handleResume}
         onDelete={handleDeleteSession}
-        onNewChat={() => { resetState(); setThreadId(null); setSidebarOpen(false); }}
+        onNewChat={handleNewChat}
       />
 
-      {/* Overlay */}
       {sidebarOpen && (
         <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
       )}
 
       <main className="main">
+        {/* Always show form */}
         <TravelForm onSearch={handleSearch} loading={loading} />
 
         {error && (
@@ -223,13 +251,13 @@ export default function App() {
           </div>
         )}
 
+        {/* Results — only show when there's something */}
         {(loading || results) && (
           <section className="results-section" ref={resultsRef}>
             <ProgressTracker steps={steps} />
 
             {results && (
               <div className="tabs-container">
-                {/* Sticky tab nav */}
                 <div className="tabs-nav" role="tablist">
                   {TABS.map(tab => (
                     <button
@@ -245,7 +273,6 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-
                 <div className="tab-content">
                   {activeTab === "flights"   && <FlightCards flights={flights} />}
                   {activeTab === "hotels"    && <HotelCards  hotels={hotels}   />}
@@ -255,6 +282,15 @@ export default function App() {
               </div>
             )}
           </section>
+        )}
+
+        {/* Empty state when no results and not loading */}
+        {!loading && !results && (
+          <div className="empty-home">
+            <p className="empty-home-icon">🌍</p>
+            <p className="empty-home-text">Where do you want to go?</p>
+            <p className="empty-home-sub">Type your travel query above to get started</p>
+          </div>
         )}
       </main>
       <Footer />

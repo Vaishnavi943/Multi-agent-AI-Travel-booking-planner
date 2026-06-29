@@ -293,3 +293,27 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--sand); col
   transition: opacity .2s;
 }
 .sidebar-group { margin-bottom: .25rem; }
+
+/* ── Empty home state ───────────────────────────────────────────────────── */
+.empty-home {
+  text-align: center;
+  padding: 4rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .75rem;
+}
+.empty-home-icon { font-size: 3.5rem; }
+.empty-home-text { font-size: 1.2rem; font-weight: 700; color: var(--ink); }
+.empty-home-sub  { font-size: .88rem; color: var(--ink-soft); }
+
+/* ── Sidebar loading ────────────────────────────────────────────────────── */
+.sidebar-loading {
+  color: rgba(255,255,255,.4);
+  font-size: .82rem;
+  text-align: center;
+  padding: 1rem;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.sidebar-item-deleting { opacity: .35; pointer-events: none; }
+.sidebar-group { margin-bottom: .25rem; }
